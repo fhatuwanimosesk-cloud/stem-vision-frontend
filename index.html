@@ -1,202 +1,77 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mathematics Made Easy - STEM Vision AI</title>
-    <!-- Tailwind CSS for styling -->
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <!-- MathJax for rendering equations and LaTeX formulas -->
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    <style>
-        .question-header { color: #c91818; font-weight: bold; font-size: 1.25rem; margin-bottom: 1rem; }
-        .math-step { margin: 0.75rem 0; font-size: 1.1rem; }
-        .final-boxed-answer { border: 2px solid #059669; padding: 1rem; border-radius: 0.5rem; background-color: #ecfdf5; font-weight: bold; margin-top: 1rem; }
-    </style>
-</head>
-<body class="bg-gray-50 text-gray-900 font-sans antialiased">
+# Drop-in replacement for the /process-image endpoint, using Claude instead of Gemini.
+# Assumes a Flask backend (the most common setup for a small Render-hosted app like
+# this one) — if your backend is actually Node/Express or something else, say so and
+# I'll rewrite this to match.
+#
+# Setup:
+#   pip install anthropic
+#   Set an ANTHROPIC_API_KEY environment variable on Render (Dashboard -> your
+#   service -> Environment), the same way you set your Gemini key.
+#
+# The response shape below — {"solution_steps": [...]} / {"error": "..."} — matches
+# what your existing frontend already expects, so nothing in the HTML/JS needs to
+# change at all.
 
-    <!-- Header Navigation -->
-    <nav class="bg-emerald-700 text-white p-4 shadow-md flex justify-between items-center">
-        <h1 class="text-xl font-bold tracking-wide">📐 Mathematics Made Easy</h1>
-        <div id="status-badge" class="text-sm font-medium bg-emerald-800 px-3 py-1 rounded">STEM Vision AI Ready</div>
-    </nav>
+import base64
+from flask import Flask, request, jsonify
+from anthropic import Anthropic
 
-    <!-- Main Workspace -->
-    <main class="max-w-4xl mx-auto p-4 md:p-8 flex flex-col gap-6">
+app = Flask(__name__)
+client = Anthropic()  # reads ANTHROPIC_API_KEY from the environment automatically
 
-        <!-- Image Upload Section -->
-        <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h2 class="text-lg font-semibold text-emerald-800 mb-4">Upload Mathematical Problem</h2>
-            <form id="solve-form" class="flex flex-col gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Problem Image</label>
-                    <input type="file" id="file-input" accept="image/*" class="w-full text-sm text-gray-500 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 p-2" required>
-                </div>
+SYSTEM_PROMPT = """You are a patient, precise math and physics tutor. You will be shown \
+a photo of a problem, along with a subject and academic level. Read the problem from \
+the image and solve it step by step, at a level appropriate for the stated academic level.
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Subject</label>
-                        <select id="subject" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
-                            <option value="Advanced Mathematics">Advanced Mathematics</option>
-                            <option value="Calculus">Calculus</option>
-                            <option value="Algebra">Algebra</option>
-                            <option value="Physics">Physics</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Academic Level</label>
-                        <select id="level" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
-                            <option value="Undergraduate">Undergraduate</option>
-                            <option value="High School">High School</option>
-                            <option value="Postgraduate">Postgraduate</option>
-                        </select>
-                    </div>
-                </div>
+Respond with ONLY the inner HTML for the solution — no markdown code fences, no text \
+outside the HTML. Use exactly these classes, which are already styled on the page:
+- One <div class="question-header"> restating the problem in your own words.
+- One <div class="math-step"> for each step of the working.
+- One <div class="final-boxed-answer"> with the final answer, clearly stated.
 
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Manual Text Correction (Optional)</label>
-                    <textarea id="corrected-text" rows="2" class="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="Add specific hints or text corrections if image is blurry..."></textarea>
-                </div>
+Write all mathematics using MathJax delimiters: \\( ... \\) for inline math, \\[ ... \\] \
+for a displayed equation. Never use a bare $ for math."""
 
-                <button type="submit" id="submit-btn" class="w-full bg-emerald-600 text-white font-medium py-2.5 rounded-lg hover:bg-emerald-700 transition">Solve Problem</button>
-            </form>
-        </section>
 
-        <!-- Solution Display Section -->
-        <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h2 class="text-lg font-semibold text-emerald-800 mb-4">Solution & Working</h2>
-            <div id="solution-output" class="text-gray-700 leading-relaxed min-h-[150px] p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <p class="text-gray-400 italic">Upload an image above and click "Solve Problem" to see step-by-step working out.</p>
-            </div>
-        </section>
+@app.route("/process-image", methods=["POST"])
+def process_image():
+    file = request.files.get("file")
+    subject = request.form.get("subject", "Advanced Mathematics")
+    level = request.form.get("level", "Undergraduate")
+    corrected_text = request.form.get("corrected_text", "")
 
-    </main>
+    if not file:
+        return jsonify({"error": "No image uploaded."}), 400
 
-    <!-- JavaScript Logic -->
-    <script>
-        const BACKEND_URL = "https://stem-vision-backend.onrender.com";
+    image_b64 = base64.standard_b64encode(file.read()).decode("utf-8")
 
-        // Resize image to reduce payload size and process faster
-        async function compressImage(file, maxWidth = 1024) {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.src = e.target.result;
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let width = img.width;
-                        let height = img.height;
+    user_text = f"Subject: {subject}\nLevel: {level}"
+    if corrected_text.strip():
+        user_text += f"\nStudent's note/correction: {corrected_text.strip()}"
 
-                        if (width > maxWidth) {
-                            height = Math.round((height * maxWidth) / width);
-                            width = maxWidth;
-                        }
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=2000,
+            system=SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": file.mimetype or "image/jpeg",
+                            "data": image_b64,
+                        },
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            }],
+        )
+        html = "".join(block.text for block in message.content if block.type == "text")
+        return jsonify({"solution_steps": [html]})
 
-                        canvas.width = width;
-                        canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0, width, height);
-
-                        canvas.toBlob((blob) => {
-                            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
-                        }, 'image/jpeg', 0.85);
-                    };
-                };
-            });
-        }
-
-        async function fetchWithRetry(url, options, maxRetries = 3, delay = 12000) {
-            const outputDiv = document.getElementById('solution-output');
-            
-            for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                try {
-                    const response = await fetch(url, options);
-
-                    if (response.status === 429) {
-                        if (attempt < maxRetries) {
-                            outputDiv.innerHTML = `<p class='text-amber-600 font-medium animate-pulse'>Quota rate limit hit. Automatically retrying (${attempt}/${maxRetries}) in ${delay / 1000}s...</p>`;
-                            await new Promise(res => setTimeout(res, delay));
-                            delay *= 1.5;
-                            continue;
-                        }
-                    }
-
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => null);
-                        if (errorData && errorData.error) {
-                            throw new Error(errorData.error);
-                        }
-                        throw new Error(`Server returned status code: ${response.status}`);
-                    }
-
-                    return await response.json();
-                } catch (err) {
-                    if (attempt === maxRetries) throw err;
-                }
-            }
-        }
-
-        document.getElementById('solve-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const fileInput = document.getElementById('file-input');
-            const submitBtn = document.getElementById('submit-btn');
-            const outputDiv = document.getElementById('solution-output');
-
-            if (!fileInput.files.length) {
-                alert("Please select an image file first.");
-                return;
-            }
-
-            submitBtn.innerText = "Compressing & Preparing Image...";
-            submitBtn.disabled = true;
-            outputDiv.innerHTML = "<p class='text-blue-600 animate-pulse font-medium'>Optimizing image for processing...</p>";
-
-            try {
-                const compressedFile = await compressImage(fileInput.files[0]);
-
-                const formData = new FormData();
-                formData.append('file', compressedFile);
-                formData.append('subject', document.getElementById('subject').value);
-                formData.append('level', document.getElementById('level').value);
-                formData.append('corrected_text', document.getElementById('corrected-text').value);
-
-                submitBtn.innerText = "Analyzing & Solving...";
-                outputDiv.innerHTML = "<p class='text-blue-600 animate-pulse font-medium'>Processing image with Gemini AI...</p>";
-
-                const data = await fetchWithRetry(`${BACKEND_URL}/process-image`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (data && data.solution_steps && data.solution_steps.length > 0) {
-                    outputDiv.innerHTML = data.solution_steps.join('');
-
-                    if (window.MathJax && window.MathJax.typesetPromise) {
-                        window.MathJax.typesetPromise([outputDiv]);
-                    }
-                } else if (data && data.error) {
-                    outputDiv.innerHTML = `<p class='text-red-600 font-bold'>Error: ${data.error}</p>`;
-                } else {
-                    outputDiv.innerHTML = "<p class='text-red-600'>No solution steps returned from server.</p>";
-                }
-            } catch (err) {
-                console.error("Fetch Error:", err);
-                outputDiv.innerHTML = `
-                    <div style="color: #c91818; text-align: center; font-weight: bold; padding: 20px;">
-                        <h2>NOTICE</h2>
-                        <p>${err.message}</p>
-                        <p style="font-size: 14px; color: #555; font-weight: normal; margin-top: 8px;">If rate limit was exceeded, wait 30–60 seconds before trying again.</p>
-                    </div>
-                `;
-            } finally {
-                submitBtn.innerText = "Solve Problem";
-                submitBtn.disabled = false;
-            }
-        });
-    </script>
-</body>
-</html>
+    except Exception as e:
+        # Surfaces as err.message in the frontend's NOTICE box.
+        return jsonify({"error": str(e)}), 500

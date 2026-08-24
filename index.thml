@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mathematics Made Easy - STEM Vision AI</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- MathJax for rendering equations and LaTeX formulas -->
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        .question-header { color: #c91818; font-weight: bold; font-size: 1.25rem; margin-bottom: 1rem; }
+        .math-step { margin: 0.75rem 0; font-size: 1.1rem; }
+        .final-boxed-answer { border: 2px solid #059669; padding: 1rem; border-radius: 0.5rem; background-color: #ecfdf5; font-weight: bold; margin-top: 1rem; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans antialiased">
+
+    <!-- Header Navigation -->
+    <nav class="bg-emerald-700 text-white p-4 shadow-md flex justify-between items-center">
+        <h1 class="text-xl font-bold tracking-wide">📐 Mathematics Made Easy</h1>
+        <div id="status-badge" class="text-sm font-medium bg-emerald-800 px-3 py-1 rounded">STEM Vision AI Ready</div>
+    </nav>
+
+    <!-- Main Workspace -->
+    <main class="max-w-4xl mx-auto p-4 md:p-8 flex flex-col gap-6">
+
+        <!-- Image Upload Section -->
+        <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h2 class="text-lg font-semibold text-emerald-800 mb-4">Upload Mathematical Problem</h2>
+            <form id="solve-form" class="flex flex-col gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Problem Image</label>
+                    <input type="file" id="file-input" accept="image/*" class="w-full text-sm text-gray-500 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 p-2" required>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                        <select id="subject" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="Advanced Mathematics">Advanced Mathematics</option>
+                            <option value="Calculus">Calculus</option>
+                            <option value="Algebra">Algebra</option>
+                            <option value="Physics">Physics</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Academic Level</label>
+                        <select id="level" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="Undergraduate">Undergraduate</option>
+                            <option value="High School">High School</option>
+                            <option value="Postgraduate">Postgraduate</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Manual Text Correction (Optional)</label>
+                    <textarea id="corrected-text" rows="2" class="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="Add specific hints or text corrections if image is blurry..."></textarea>
+                </div>
+
+                <button type="submit" id="submit-btn" class="w-full bg-emerald-600 text-white font-medium py-2.5 rounded-lg hover:bg-emerald-700 transition">Solve Problem</button>
+            </form>
+        </section>
+
+        <!-- Solution Display Section -->
+        <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h2 class="text-lg font-semibold text-emerald-800 mb-4">Solution & Working</h2>
+            <div id="solution-output" class="text-gray-700 leading-relaxed min-h-[150px] p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p class="text-gray-400 italic">Upload an image above and click "Solve Problem" to see step-by-step working out.</p>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- JavaScript Logic -->
+    <script>
+        const BACKEND_URL = "https://stem-vision-backend.onrender.com";
+
+        document.getElementById('solve-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const fileInput = document.getElementById('file-input');
+            const submitBtn = document.getElementById('submit-btn');
+            const outputDiv = document.getElementById('solution-output');
+
+            if (!fileInput.files.length) {
+                alert("Please select an image file first.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('subject', document.getElementById('subject').value);
+            formData.append('level', document.getElementById('level').value);
+            formData.append('corrected_text', document.getElementById('corrected-text').value);
+
+            submitBtn.innerText = "Analyzing & Solving... (May take up to 30s)";
+            submitBtn.disabled = true;
+            outputDiv.innerHTML = "<p class='text-blue-600 animate-pulse font-medium'>Processing image with Gemini AI...</p>";
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/process-image`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (data.solution_steps && data.solution_steps.length > 0) {
+                    outputDiv.innerHTML = data.solution_steps.join('');
+
+                    // Render LaTeX formulas
+                    if (window.MathJax && window.MathJax.typesetPromise) {
+                        window.MathJax.typesetPromise([outputDiv]);
+                    }
+                } else {
+                    outputDiv.innerHTML = "<p class='text-red-600'>No solution steps returned from server.</p>";
+                }
+            } catch (err) {
+                console.error("Fetch Error:", err);
+                outputDiv.innerHTML = `
+                    <div style="color: #c91818; text-align: center; font-weight: bold; padding: 20px;">
+                        <h2>CONNECTION ERROR</h2>
+                        <p>${err.message}</p>
+                        <p style="font-size: 14px; color: #555; font-weight: normal; margin-top: 8px;">Ensure https://stem-vision-backend.onrender.com is running and awake.</p>
+                    </div>
+                `;
+            } finally {
+                submitBtn.innerText = "Solve Problem";
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

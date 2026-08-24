@@ -73,9 +73,40 @@
 
     </main>
 
-    <!-- JavaScript Logic -->
+    <!-- JavaScript Logic with Auto-Retry -->
     <script>
         const BACKEND_URL = "https://stem-vision-backend.onrender.com";
+
+        async function fetchWithRetry(url, options, maxRetries = 3, delay = 10000) {
+            const outputDiv = document.getElementById('solution-output');
+            
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const response = await fetch(url, options);
+
+                    if (response.status === 429) {
+                        if (attempt < maxRetries) {
+                            outputDiv.innerHTML = `<p class='text-amber-600 font-medium animate-pulse'>Rate limit hit. Retrying attempt ${attempt}/${maxRetries} in ${delay / 1000} seconds...</p>`;
+                            await new Promise(res => setTimeout(res, delay));
+                            delay *= 1.5; // Gradually increase wait time
+                            continue;
+                        }
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => null);
+                        if (errorData && errorData.error) {
+                            throw new Error(errorData.error);
+                        }
+                        throw new Error(`Server returned status code: ${response.status}`);
+                    }
+
+                    return await response.json();
+                } catch (err) {
+                    if (attempt === maxRetries) throw err;
+                }
+            }
+        }
 
         document.getElementById('solve-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -95,29 +126,25 @@
             formData.append('level', document.getElementById('level').value);
             formData.append('corrected_text', document.getElementById('corrected-text').value);
 
-            submitBtn.innerText = "Analyzing & Solving... (May take up to 30s)";
+            submitBtn.innerText = "Analyzing & Solving...";
             submitBtn.disabled = true;
             outputDiv.innerHTML = "<p class='text-blue-600 animate-pulse font-medium'>Processing image with Gemini AI...</p>";
 
             try {
-                const response = await fetch(`${BACKEND_URL}/process-image`, {
+                const data = await fetchWithRetry(`${BACKEND_URL}/process-image`, {
                     method: 'POST',
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error(`Server status: ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                if (data.solution_steps && data.solution_steps.length > 0) {
+                if (data && data.solution_steps && data.solution_steps.length > 0) {
                     outputDiv.innerHTML = data.solution_steps.join('');
 
                     // Render LaTeX formulas
                     if (window.MathJax && window.MathJax.typesetPromise) {
                         window.MathJax.typesetPromise([outputDiv]);
                     }
+                } else if (data && data.error) {
+                    outputDiv.innerHTML = `<p class='text-red-600 font-bold'>Error: ${data.error}</p>`;
                 } else {
                     outputDiv.innerHTML = "<p class='text-red-600'>No solution steps returned from server.</p>";
                 }
@@ -125,9 +152,9 @@
                 console.error("Fetch Error:", err);
                 outputDiv.innerHTML = `
                     <div style="color: #c91818; text-align: center; font-weight: bold; padding: 20px;">
-                        <h2>CONNECTION ERROR</h2>
+                        <h2>NOTICE</h2>
                         <p>${err.message}</p>
-                        <p style="font-size: 14px; color: #555; font-weight: normal; margin-top: 8px;">Ensure https://stem-vision-backend.onrender.com is running and awake.</p>
+                        <p style="font-size: 14px; color: #555; font-weight: normal; margin-top: 8px;">If rate limit was exceeded, please wait 30–60 seconds before trying again.</p>
                     </div>
                 `;
             } finally {
